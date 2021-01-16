@@ -1,0 +1,57 @@
+import torchvision.transforms as transforms
+import numpy as np
+import math
+import MaskRCNN.constants
+
+# COCO category names for Mask R-CNN classificatons, modified for packages
+COCO_CLASS_NAMES = MaskRCNN.constants.COCO_CLASS_NAMES_MODIFIED
+
+def getDetections(model, img, confidence, device):
+  """
+  getDetections
+    parameters:
+      - model: Mask R-CNN model
+      - img: the input image as a numpy array
+      - confidence: threshold to keep the prediction or not
+      - device: cpu or cuda
+    return:
+      - masks and classes of detected object instances as numpy arrays
+      - bounding boxes of detected object instances as a list containing [(x0, y0), (x1, y1)] per instance
+    method:
+      - the image is converted to a tensor with a batch size of 1 and is passed 
+        through the model to get the predictions
+      - the predictions provide masks, bounding boxes, classes, and prediction scores
+        - soft masks with continuous values are changed to binary masks where 1
+          represents the object and 0 represents the rest of the image
+        - bounding boxes are stored in a [(x0, y0), (x1, y1)] format, with coordinates
+          rounded to maximize area
+        - classes are stored as an array of COCO class names
+        - prediction scores represent the classification probabilities
+      - the prediction output is sorted by prediction scores, so the index of the
+        last instance that meets the confidence criterion is used as a filter
+  """
+  model.to(device)
+
+  transform = transforms.Compose([
+          transforms.ToTensor(),
+          transforms.Lambda(lambda x : x.unsqueeze(0))
+      ])
+  
+  img = transform(img)
+  img = img.to(device)
+  pred = model(img)
+  pred = pred[0]
+
+  masks = (pred['masks'] > 0.5).squeeze().detach().cpu().numpy()
+  boxes = list(pred['boxes'].detach().cpu().numpy())
+  boxes = [[(math.floor(i[0]), math.floor(i[1])), (math.ceil(i[2]), math.ceil(i[3]))] for i in boxes]
+  classes = [COCO_CLASS_NAMES[i] for i in list(pred['labels'].detach().cpu().numpy())]
+
+  pred_scores = list(pred['scores'].detach().cpu().numpy())
+  last_inst_ind = [pred_scores.index(x) for x in pred_scores if x > confidence][-1]
+  
+  masks = masks[:last_inst_ind+1]
+  boxes = boxes[:last_inst_ind+1]
+  classes = np.array(classes[:last_inst_ind+1])
+
+  return masks, boxes, classes
